@@ -54,8 +54,8 @@ conda env create -f environment.yml
 ### 2. Download checkpoint
 Download the finetuned [checkpoint](https://drive.google.com/drive/folders/1H7vgiNVbxSeeleyJOqhoyRbJ97kGWGOK?usp=sharing), and put it under `checkpoints/`.
 ```
-mkdir checkpoints
-cd checkpoints
+mkdir -p checkpoints/svd_reverse_motion_with_attnflip
+cd checkpoints/svd_reverse_motion_with_attnflip
 pip install gdown
 gdown 1H7vgiNVbxSeeleyJOqhoyRbJ97kGWGOK --folder
 ```
