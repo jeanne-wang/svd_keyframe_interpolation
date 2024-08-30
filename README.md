@@ -53,6 +53,13 @@ conda env create -f environment.yml
 ```
 ### 2. Download checkpoint
 Download the finetuned [checkpoint](https://drive.google.com/drive/folders/1H7vgiNVbxSeeleyJOqhoyRbJ97kGWGOK?usp=sharing), and put it under `checkpoints/`.
+```
+mkdir checkpoints
+cd checkpoints
+pip install gdown
+gdown 1H7vgiNVbxSeeleyJOqhoyRbJ97kGWGOK --folder
+```
+
 
 
 ### 3. Launch the inference script!
