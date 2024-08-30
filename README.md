@@ -70,6 +70,8 @@ To interpolate, run:
 ```
 bash keyframe_interpolation.sh
 ```
+We run the code on A100, please set smaller "decode_chunk_size" to run on smaller GPUs like A40.
+
 ## Light-weight finetuing
 ```
 The synthetic training videos dataset will be released soon.
