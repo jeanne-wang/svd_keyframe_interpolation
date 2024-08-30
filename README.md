@@ -15,8 +15,8 @@
 <table class="center">
     <tr style="font-weight: bolder;text-align:center;">
         <td>Input frame 1</td>
-        <td>Generated video</td>
         <td>Input frame 2</td>
+        <td>Generated video</td>
     </tr>
   	<tr>
 	  <td>
