@@ -236,7 +236,9 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         if latents is None:
             latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
+            assert latents.shape == shape, f"{latents.shape} != {shape}"
             latents = latents.to(device)
+
 
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
@@ -417,56 +419,60 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         num_frames = num_frames if num_frames is not None else self.unet.config.num_frames
         decode_chunk_size = decode_chunk_size if decode_chunk_size is not None else num_frames
 
-        image1 = images[0]
-        image2 = images[-1]
-
-        # 1. Check inputs. Raise error if not correct
-        self.check_inputs(image1, height, width)
-        self.check_inputs(image2, height, width)
-
-        # 2. Define call parameters
-        if isinstance(image1, PIL.Image.Image):
-            batch_size = 1
-        elif isinstance(image1, list):
-            batch_size = len(image1)
-        else:
-            batch_size = image1.shape[0]
+        # 0. (was 2.) Define call parameters
+        batch_size = 1
         device = self._execution_device
         # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
         # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
         # corresponds to doing no classifier free guidance.
         self._guidance_scale = max_guidance_scale
-
-        # 3. Encode input image
-        image1_embeddings = self._encode_image(image1, device, num_videos_per_prompt, self.do_classifier_free_guidance)
-        image2_embeddings = self._encode_image(image2, device, num_videos_per_prompt, self.do_classifier_free_guidance)
-
         # NOTE: Stable Diffusion Video was conditioned on fps - 1, which
         # is why it is reduced here.
         # See: https://github.com/Stability-AI/generative-models/blob/ed0997173f98eaf8f4edf7ba5fe8f15c6b877fd3/scripts/sampling/simple_video_sample.py#L188
         fps = fps - 1
-
-        # 4. Encode input image using VAE
-        image1 = self.image_processor.preprocess(image1, height=height, width=width).to(device)
-        image2 = self.image_processor.preprocess(image2, height=height, width=width).to(device)
-        noise = randn_tensor(image1.shape, generator=generator, device=image1.device, dtype=image1.dtype)
-        image1 = image1 + noise_aug_strength * noise
-        image2 = image2 + noise_aug_strength * noise
-
         needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
         if needs_upcasting:
             self.vae.to(dtype=torch.float32)
 
+        # instead of just the first and last frames, we process/embed all frames
+        image_latents = []
+        image_embeddings = []
+        noise = None
+        image_embedding_dtype = None
 
-        # Repeat the image latents for each frame so we can concatenate them with the noise
-        # image_latents [batch, channels, height, width] ->[batch, num_frames, channels, height, width]
-        image1_latent = self._encode_vae_image(image1, device, num_videos_per_prompt, self.do_classifier_free_guidance)
-        image1_latent = image1_latent.to(image1_embeddings.dtype)
-        image1_latents = image1_latent.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
+        for image in images:
+            # 1. Check inputs. Raise error if not correct
+            self.check_inputs(image, height, width)
 
-        image2_latent = self._encode_vae_image(image2, device, num_videos_per_prompt, self.do_classifier_free_guidance)
-        image2_latent = image2_latent.to(image2_embeddings.dtype)
-        image2_latents = image2_latent.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
+            # 3. Encode input image
+            image_embedding = self._encode_image(image, device, num_videos_per_prompt, self.do_classifier_free_guidance)
+            if image_embedding_dtype is None:
+                image_embedding_dtype = image_embedding.dtype
+
+            image_embeddings.append(image_embedding)
+
+            # 4. Encode input image using VAE
+            image = self.image_processor.preprocess(image, height=height, width=width).to(device)
+
+            if noise is None:
+                noise = randn_tensor(image.shape, generator=generator, device=image.device, dtype=image.dtype)
+
+            image = image + noise_aug_strength * noise
+
+            # Repeat the image latents for each frame, so we can concatenate them with the noise
+            # image_latents [batch, channels, height, width] ->[batch, num_frames, channels, height, width]
+            image_latent = self._encode_vae_image(image, device, num_videos_per_prompt, self.do_classifier_free_guidance)
+            image_latent = image_latent.to(image_embedding_dtype)
+            image_latents.append(image_latent)
+
+        # if we just want to use the first and last frame, like in the original paper:
+        image1_latents = image_latents[0].unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
+        image1_embeddings = image_embeddings[0]
+        image2_latents = image_latents[-1].unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
+        image2_embeddings = image_embeddings[-1]
+
+        # if we want to use the intermediate frames as well:
+        # TODO
 
         # cast back to fp16 if needed
         if needs_upcasting:
@@ -477,7 +483,8 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
             fps,
             motion_bucket_id,
             noise_aug_strength,
-            image1_embeddings.dtype,
+            # image1_embeddings.dtype,
+            image_embedding_dtype,
             batch_size,
             num_videos_per_prompt,
             self.do_classifier_free_guidance,
@@ -490,13 +497,26 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
 
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
+
+        # NOTE: passing encoded images as latents has no effect
+        # @ karoly
+        # if not self.do_classifier_free_guidance:
+        #     latents = torch.stack(image_latents, dim=1)
+        # else:
+        #     # we concatenated to all zeros on the 0th axis because of the guidance.
+        #     # See custom_diffusers/pipelines/pipeline_frame_interpolation_with_noise_injection.py:133
+        #     # now we need to drop every the all-zeros before concat
+        #     latents = torch.stack([image_lat[1:] for image_lat in image_latents], dim=1)
+        # latents = latents.to(device=device, dtype=image_embedding_dtype)
+
         latents = self.prepare_latents(
             batch_size * num_videos_per_prompt,
             num_frames,
             num_channels_latents,
             height,
             width,
-            image1_embeddings.dtype,
+            # image1_embeddings.dtype,
+            image_embedding_dtype,
             device,
             generator,
             latents,
@@ -514,7 +534,7 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
             w = w.repeat(batch_size*num_videos_per_prompt, 1)
             w = _append_dims(w, latents.ndim)
         else:
-            self._guidance_scale = (guidance_scale+torch.flip(guidance_scale, (1,)))*0.5
+            self._guidance_scale = (guidance_scale+torch.flip(guidance_scale, (1,))) * 0.5
             w = 0.5
 
         # 8. Denoising loop
@@ -526,8 +546,8 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
 
-                noise_pred = self.multidiffusion_step(latents, t, 
-                    image1_embeddings, image2_embeddings, 
+                noise_pred = self.multidiffusion_step(latents, t,
+                    image1_embeddings, image2_embeddings,
                     image1_latents, image2_latents, added_time_ids, w
                 )
                 # compute the previous noisy sample x_t -> x_t-1
@@ -540,8 +560,8 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
                         noise = randn_tensor(latents.shape, device=latents.device, dtype=latents.dtype)
                         noise = noise * sigma
                         latents = latents + noise
-                        noise_pred = self.multidiffusion_step(latents, t, 
-                            image1_embeddings, image2_embeddings, 
+                        noise_pred = self.multidiffusion_step(latents, t,
+                            image1_embeddings, image2_embeddings,
                             image1_latents, image2_latents, added_time_ids, w
                         )
                         # compute the previous noisy sample x_t -> x_t-1
