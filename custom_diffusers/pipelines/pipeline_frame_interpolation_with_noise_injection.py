@@ -314,8 +314,8 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        image1: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor],
-        image2: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor],
+        # images added by @karoly, originally it was the 1st and last image.
+        images: List[Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor]],
         height: int = 576,
         width: int = 1024,
         num_frames: Optional[int] = None,
@@ -341,9 +341,6 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         The call function to the pipeline for generation.
 
         Args:
-            image (`PIL.Image.Image` or `List[PIL.Image.Image]` or `torch.FloatTensor`):
-                Image or images to guide image generation. If you provide a tensor, it needs to be compatible with
-                [`CLIPImageProcessor`](https://huggingface.co/lambdalabs/sd-image-variations-diffusers/blob/main/feature_extractor/preprocessor_config.json).
             height (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
@@ -419,6 +416,9 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
 
         num_frames = num_frames if num_frames is not None else self.unet.config.num_frames
         decode_chunk_size = decode_chunk_size if decode_chunk_size is not None else num_frames
+
+        image1 = images[0]
+        image2 = images[-1]
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(image1, height, width)
@@ -558,6 +558,11 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
 
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
+
+        # @@@karoly - save GPU memory
+        self.image_encoder = self.image_encoder.to("cpu")
+        self.unet = self.unet.to("cpu")
+        self.ori_unet = self.ori_unet.to("cpu")
 
         if not output_type == "latent":
             # cast back to fp16 if needed
