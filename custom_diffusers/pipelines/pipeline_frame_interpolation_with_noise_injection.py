@@ -239,7 +239,6 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
             assert latents.shape == shape, f"{latents.shape} != {shape}"
             latents = latents.to(device)
 
-
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
@@ -274,12 +273,12 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         # expand the latents if we are doing classifier free guidance
         latents1 = latents
         latents2 = torch.flip(latents, (1,))
+
         latent_model_input1 = torch.cat([latents1] * 2) if self.do_classifier_free_guidance else latents1
         latent_model_input1 = self.scheduler.scale_model_input(latent_model_input1, t)
 
         latent_model_input2 = torch.cat([latents2] * 2) if self.do_classifier_free_guidance else latents2
-        latent_model_input2= self.scheduler.scale_model_input(latent_model_input2, t)
-
+        latent_model_input2 = self.scheduler.scale_model_input(latent_model_input2, t)
 
         # Concatenate image_latents over channels dimention
         latent_model_input1 = torch.cat([latent_model_input1, image1_latents], dim=2)
@@ -309,8 +308,95 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
             noise_pred2 = noise_pred_uncond2 + self.guidance_scale * (noise_pred_cond2 - noise_pred_uncond2)
 
         noise_pred2 = torch.flip(noise_pred2, (1,))
-        noise_pred = avg_weight*noise_pred1+ (1-avg_weight)*noise_pred2
+        noise_pred = avg_weight * noise_pred1 + (1-avg_weight)*noise_pred2
         return noise_pred
+
+    # @torch.no_grad()
+    # def my_multidiffusion_step(
+    #         self,
+    #         latents,
+    #         t,
+    #         image1_embeddings,
+    #         image2_embeddings,
+    #         image1_latents,
+    #         image2_latents,
+    #         added_time_ids,
+    #         avg_weight,
+    #         imperfect_frames,
+    #     ):
+    #     # expand the latents if we are doing classifier free guidance
+    #     latents1 = latents
+    #     latents2 = torch.flip(latents, (1,))
+    #     latent_model_input1 = torch.cat([latents1] * 2) if self.do_classifier_free_guidance else latents1
+    #     latent_model_input1 = self.scheduler.scale_model_input(latent_model_input1, t)
+    #
+    #     latent_model_input2 = torch.cat([latents2] * 2) if self.do_classifier_free_guidance else latents2
+    #     latent_model_input2 = self.scheduler.scale_model_input(latent_model_input2, t)
+    #
+    #     # Concatenate image_latents over channels dimension
+    #     latent_model_input1_ = torch.cat([latent_model_input1, image1_latents], dim=2)
+    #     latent_model_input2_ = torch.cat([latent_model_input2, image2_latents], dim=2)
+    #
+    #     # predict the noise residual
+    #     noise_pred1 = self.ori_unet(
+    #         latent_model_input1_,
+    #         t,
+    #         encoder_hidden_states=image1_embeddings,
+    #         added_time_ids=added_time_ids,
+    #         return_dict=False,
+    #     )[0]
+    #     noise_pred2 = self.unet(
+    #         latent_model_input2_,
+    #         t,
+    #         encoder_hidden_states=image2_embeddings,
+    #         added_time_ids=added_time_ids,
+    #         return_dict=False,
+    #     )[0]
+    #
+    #     # Add imperfect frames as additional guidance
+    #     imperfect_frames_scaled = self.scheduler.scale_model_input(imperfect_frames, t)
+    #     # Reverse the order of imperfect frames for latent_model_input2
+    #     imperfect_frames_flipped = torch.flip(imperfect_frames_scaled, (1,))
+    #     # imperfect_frames_scaled = torch.cat([imperfect_frames_scaled] * 2) if self.do_classifier_free_guidance else imperfect_frames_scaled
+    #     # imperfect_frames_flipped = torch.cat([imperfect_frames_flipped] * 2) if self.do_classifier_free_guidance else imperfect_frames_flipped
+    #     latent_model_input1_ = torch.cat([latent_model_input1, imperfect_frames_scaled], dim=2)
+    #     latent_model_input2_ = torch.cat([latent_model_input2, imperfect_frames_flipped], dim=2)
+    #     _noise_pred1 = self.ori_unet(
+    #         latent_model_input1_,
+    #         t,
+    #         encoder_hidden_states=image1_embeddings,
+    #         added_time_ids=added_time_ids,
+    #         return_dict=False,
+    #     )[0]
+    #     _noise_pred2 = self.unet(
+    #         latent_model_input2_,
+    #         t,
+    #         encoder_hidden_states=image2_embeddings,
+    #         added_time_ids=added_time_ids,
+    #         return_dict=False,
+    #     )[0]
+    #     noise_pred1 = 0.8 * noise_pred1 + 0.2 * _noise_pred1
+    #     noise_pred2 = 0.8 * noise_pred2 + 0.2 * _noise_pred2
+    #
+    #     # perform guidance
+    #     if self.do_classifier_free_guidance:
+    #         noise_pred_uncond1, noise_pred_cond1 = noise_pred1.chunk(2)
+    #         noise_pred1 = noise_pred_uncond1 + self.guidance_scale * (noise_pred_cond1 - noise_pred_uncond1)
+    #
+    #         noise_pred_uncond2, noise_pred_cond2 = noise_pred2.chunk(2)
+    #         noise_pred2 = noise_pred_uncond2 + self.guidance_scale * (noise_pred_cond2 - noise_pred_uncond2)
+    #
+    #     # Flip noise prediction for the second input
+    #     noise_pred2 = torch.flip(noise_pred2, (1,))
+    #
+    #     # Combine noise predictions
+    #     noise_pred = avg_weight * noise_pred1 + (1 - avg_weight) * noise_pred2
+    #
+    #     # Blend noise predictions with guidance from imperfect frames
+    #     # imperfect_noise_guidance = imperfect_frames_scaled.mean(dim=2)  # Simple example, adjust as needed
+    #     # noise_pred = noise_pred + 0.1 * imperfect_noise_guidance  # Adjust weight (0.1) based on effectiveness
+    #
+    #     return noise_pred
 
 
     @torch.no_grad()
@@ -336,8 +422,9 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         weighted_average: bool = False,
         noise_injection_steps: int = 0,
-        noise_injection_ratio: float=0.0,
+        noise_injection_ratio: float = 0.0,
         return_dict: bool = True,
+        init_noise_ratio: float = 0.5,
     ):
         r"""
         The call function to the pipeline for generation.
@@ -456,7 +543,6 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
 
             if noise is None:
                 noise = randn_tensor(image.shape, generator=generator, device=image.device, dtype=image.dtype)
-
             image = image + noise_aug_strength * noise
 
             # Repeat the image latents for each frame, so we can concatenate them with the noise
@@ -470,9 +556,6 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         image1_embeddings = image_embeddings[0]
         image2_latents = image_latents[-1].unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
         image2_embeddings = image_embeddings[-1]
-
-        # if we want to use the intermediate frames as well:
-        # TODO
 
         # cast back to fp16 if needed
         if needs_upcasting:
@@ -500,16 +583,25 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
 
         # NOTE: passing encoded images as latents has no effect
         # @ karoly
-        # if not self.do_classifier_free_guidance:
-        #     latents = torch.stack(image_latents, dim=1)
-        # else:
-        #     # we concatenated to all zeros on the 0th axis because of the guidance.
-        #     # See custom_diffusers/pipelines/pipeline_frame_interpolation_with_noise_injection.py:133
-        #     # now we need to drop every the all-zeros before concat
-        #     latents = torch.stack([image_lat[1:] for image_lat in image_latents], dim=1)
-        # latents = latents.to(device=device, dtype=image_embedding_dtype)
+        if not self.do_classifier_free_guidance:
+            latents = torch.stack(image_latents, dim=1)
+        else:
+            # we concatenated to all zeros on the 0th axis because of the guidance.
+            # See custom_diffusers/pipelines/pipeline_frame_interpolation_with_noise_injection.py:133
+            # now we need to drop every the all-zeros before concat
+            latents = torch.stack([image_lat[1:] for image_lat in image_latents], dim=1)
+        latents = latents.to(device=device, dtype=image_embedding_dtype)
+        latents_range = latents.max() - latents.min()
+        # print(latents.min(), latents.max())
+        noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=image_embedding_dtype)
+        noise_range = noise.max() - noise.min()
+        latents = latents * (noise_range / latents_range)
 
-        latents = self.prepare_latents(
+        latents = latents * (init_noise_ratio - 1) + init_noise_ratio * noise
+        # scale the initial noise by the standard deviation required by the scheduler
+        latents = latents * self.scheduler.init_noise_sigma
+
+        prepared_latents = self.prepare_latents(
             batch_size * num_videos_per_prompt,
             num_frames,
             num_channels_latents,
@@ -519,8 +611,24 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
             image_embedding_dtype,
             device,
             generator,
-            latents,
+            latents=None,
         )
+        # assert the latents we created in our hacky ways are somewhat similar to the random latents expected
+        # by the model
+        import matplotlib.pyplot as plt
+        plt.figure()
+        latents_for_visu = latents.flatten().detach().cpu().numpy()
+        plt.subplot(1, 2, 1)
+        plt.hist(latents_for_visu, bins=50)
+        plt.subplot(1, 2, 2)
+        prepared_latents_for_visu = prepared_latents.flatten().detach().cpu().numpy()
+        plt.hist(prepared_latents_for_visu, bins=50)
+        plt.savefig("/home/karoly.harsanyi/asd.png")
+        del prepared_latents
+
+        # @karoly load all frames for guidance
+        # frames = torch.stack([image_lat[1:] for image_lat in image_latents], dim=1).to(device=device, dtype=image_embedding_dtype)
+        # frames = torch.stack(image_latents, dim=1).to(device=device, dtype=image_embedding_dtype)
 
         # 7. Prepare guidance scale
         guidance_scale = torch.linspace(min_guidance_scale, max_guidance_scale, num_frames).unsqueeze(0)
@@ -545,13 +653,17 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
         noise_injection_step_threshold = int(num_inference_steps*noise_injection_ratio)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-
+                # noise pred from video U-net
                 noise_pred = self.multidiffusion_step(latents, t,
                     image1_embeddings, image2_embeddings,
-                    image1_latents, image2_latents, added_time_ids, w
+                    image1_latents, image2_latents, added_time_ids, w,
                 )
+
+                # TODO: we also need a noise pred from an image 2 image U-net
+
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
                 if i < noise_injection_step_threshold and noise_injection_steps > 0:
                     sigma_t = self.scheduler.sigmas[self.scheduler.step_index]
                     sigma_tm1 = self.scheduler.sigmas[self.scheduler.step_index+1]
@@ -560,10 +672,14 @@ class FrameInterpolationWithNoiseInjectionPipeline(DiffusionPipeline):
                         noise = randn_tensor(latents.shape, device=latents.device, dtype=latents.dtype)
                         noise = noise * sigma
                         latents = latents + noise
+                        # noise pred from video U-net
                         noise_pred = self.multidiffusion_step(latents, t,
                             image1_embeddings, image2_embeddings,
-                            image1_latents, image2_latents, added_time_ids, w
+                            image1_latents, image2_latents, added_time_ids, w,
                         )
+
+                        # TODO: we also need a noise pred from an image 2 image U-net
+
                         # compute the previous noisy sample x_t -> x_t-1
                         latents = self.scheduler.step(noise_pred, t, latents).prev_sample
                 self.scheduler._step_index += 1

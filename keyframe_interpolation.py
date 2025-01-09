@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 import glob
 from diffusers.utils import load_image, export_to_video
-from diffusers import UNetSpatioTemporalConditionModel
+from diffusers import UNetSpatioTemporalConditionModel, StableDiffusionImg2ImgPipeline
 from custom_diffusers.pipelines.pipeline_frame_interpolation_with_noise_injection import FrameInterpolationWithNoiseInjectionPipeline
 from custom_diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
 from attn_ctrl.attention_control import (AttentionStore, 
@@ -39,7 +39,15 @@ def main(args):
         variant='fp16',
         torch_dtype=torch.float16,
     )
-  
+
+    # pipe = StableDiffusionImg2ImgPipeline()  # .from_pretrained(model_id_or_path, torch_dtype=torch.float16)
+    # img2img_unet = UNetSpatioTemporalConditionModel.from_pretrained(
+    #     "stabilityai/stable-video-diffusion-img2vid",
+    #     subfolder="unet",
+    #     variant='fp16',
+    #     torch_dtype=torch.float16,
+    # )
+
     finetuned_state_dict = finetuned_unet.state_dict()
     ori_state_dict = ori_unet.state_dict()
     for name, param in finetuned_state_dict.items():
@@ -48,7 +56,7 @@ def main(args):
             state_dict[name] = state_dict[name] + delta_w
     pipe.unet.load_state_dict(state_dict)
 
-    controller_ref= AttentionStore()
+    controller_ref = AttentionStore()
     register_temporal_self_attention_control(ref_unet, controller_ref)
 
     controller = AttentionStore()
@@ -95,6 +103,10 @@ def main(args):
         # (height: int = 576, width: int = 1024,)
         height=360,
         width=640,
+        # noise_aug_strength=0.0,
+        # noise_injection_steps=0,
+        min_guidance_scale=1.0,
+        max_guidance_scale=1.0,
     ).frames[0]
 
     # original code
