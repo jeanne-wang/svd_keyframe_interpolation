@@ -18,7 +18,7 @@ def main(args):
         args.pretrained_model_name_or_path, 
         scheduler=noise_scheduler,
         variant="fp16",
-        torch_dtype=torch.float16, 
+        torch_dtype=(torch.float32 if args.device == 'cpu' else torch.float16),
     )
     ref_unet = pipe.ori_unet
 
@@ -35,7 +35,7 @@ def main(args):
         "stabilityai/stable-video-diffusion-img2vid",
         subfolder="unet",
         variant='fp16',
-        torch_dtype=torch.float16,
+        torch_dtype=(torch.float32 if args.device == 'cpu' else torch.float16),
     )
   
     finetuned_state_dict = finetuned_unet.state_dict()
